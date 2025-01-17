@@ -3,24 +3,34 @@ import logging
 import json
 from datetime import datetime
 from redis.asyncio import Redis
+from src.core.services import (
+    LLMService,
+    RedisService,
+    WorldGenerationService,
+    FrameworkGenerationService,
+    StoryGenerationService,
+    ValidationService
+)
 from src.core.services.story_orchestration_service import StoryOrchestrationService
-from src.core.services.llm_service import LLMService
-from src.core.services.world_generation_service import WorldGenerationService
-from src.core.services.framework_generation_service import FrameworkGenerationService
-from src.core.services.story_generation_service import StoryGenerationService
-from src.core.services.validation_service import ValidationService
+import os
 
 logger = logging.getLogger(__name__)
 
 class StoryWorker:
-    def __init__(self, redis_service: Redis):
-        self.redis = redis_service
-        # Initialize services
-        self.llm = LLMService()
-        self.world_service = WorldGenerationService(self.llm)
-        self.framework_service = FrameworkGenerationService(self.llm)
-        self.story_service = StoryGenerationService(self.llm)
-        self.validation_service = ValidationService(self.llm)
+    def __init__(self, redis_client: RedisService):
+        self.redis_client = redis_client
+        self.llm_service = LLMService()
+        
+        # Initialize generation services
+        try:
+            self.world_service = WorldGenerationService(self.llm_service)
+            self.framework_service = FrameworkGenerationService(self.llm_service)
+            self.story_service = StoryGenerationService(self.llm_service)
+            self.validation_service = ValidationService(self.llm_service)
+        except Exception as e:
+            logger.error(f"Failed to initialize services: {str(e)}")
+            raise
+
         self.orchestrator = StoryOrchestrationService(
             world_service=self.world_service,
             framework_service=self.framework_service,
@@ -41,41 +51,58 @@ class StoryWorker:
     async def process_request(self, request_id: str) -> None:
         """Process a single story generation request"""
         try:
-            # Get request details from Redis
-            request_data = await self.redis.hgetall(f"request:{request_id}")
-            if not request_data:
-                logger.error(f"No data found for request {request_id}")
-                return
-
+            # Get request data
+            request_data = await self.redis_client.get_request_data(request_id)
+            
             # Update status to processing
-            await self.redis.hset(f"request:{request_id}", "status", "processing")
+            await self.redis_client.update_request_status(request_id, "processing")
             
-            # Generate story using the orchestrator
-            story = await self.orchestrator.generate_complete_story(request_data["prompt"])
+            # Publish progress update
+            await self.redis_client.publish_progress(request_id, "Starting world generation...")
             
-            # Serialize story data before storing
-            serialized_story = self.serialize_story(story)
-            
-            # Store result
-            await self.redis.hset(
-                f"request:{request_id}",
-                mapping={
-                    "result": json.dumps(serialized_story),
-                    "status": "completed",
-                    "completed_at": datetime.now().isoformat()
-                }
-            )
-            logger.info(f"Completed story generation for request {request_id}")
-            
+            try:
+                # World Building
+                await self.redis_client.publish_progress(request_id, "Creating story world and characters...")
+                bible = await self.world_service.generate_complete_bible(request_data["prompt"])
+                await self.redis_client.publish_progress(request_id, "World building complete!")
+                
+                # Framework Creation
+                await self.redis_client.publish_progress(request_id, "Designing story framework...")
+                framework = await self.framework_service.create_framework(bible)
+                await self.redis_client.publish_progress(request_id, "Story framework complete!")
+                
+                # Story Generation
+                await self.redis_client.publish_progress(request_id, "Beginning story writing...")
+                story = await self.story_service.generate_story(
+                    story_bible=bible.model_dump(),
+                    framework=framework
+                )
+                
+                # Convert story to dictionary for storage
+                story_dict = story.to_dict()
+                
+                # Store result
+                await self.redis_client.store_story_result(request_id, story_dict)
+                await self.redis_client.update_request_status(request_id, "completed")
+                
+                await self.redis_client.publish_progress(
+                    request_id, 
+                    f"Story generation complete! Generated {story.word_count} words."
+                )
+                
+                logger.info(f"Completed story generation for request {request_id}")
+                
+            except Exception as e:
+                error_msg = f"Error during story generation: {str(e)}"
+                logger.error(error_msg)
+                await self.redis_client.publish_progress(request_id, f"Error: {error_msg}")
+                await self.redis_client.update_request_status(request_id, "failed", error=str(e))
+                raise
+                
         except Exception as e:
             logger.error(f"Error processing request {request_id}: {str(e)}")
-            await self.redis.hset(
-                f"request:{request_id}",
-                mapping={
-                    "status": "failed",
-                    "error": str(e)
-                }
-            )
+            await self.redis_client.update_request_status(request_id, "failed", error=str(e))
+            await self.redis_client.publish_progress(request_id, f"Failed: {str(e)}")
 
     async def run(self):
         """Main worker loop"""
@@ -84,16 +111,38 @@ class StoryWorker:
         
         while self.running:
             try:
+                # Verify Redis connection is alive
+                await self.redis_client.ping()
+                
                 # Get next request from queue
-                request_id = await self.redis.lpop("queue:pending")
+                request_id = await self.redis_client.get_next_request()
                 
                 if request_id:
                     logger.info(f"Processing request {request_id}")
-                    await self.process_request(request_id)
+                    try:
+                        await self.process_request(request_id)
+                    except Exception as e:
+                        logger.error(f"Error processing request {request_id}: {str(e)}")
+                        # Update request status to failed
+                        await self.redis_client.update_request_status(
+                            request_id=request_id,
+                            status="failed",
+                            error=str(e)
+                        )
                 else:
                     # No requests, wait before checking again
                     await asyncio.sleep(1)
                     
             except Exception as e:
                 logger.error(f"Worker error: {str(e)}")
-                await asyncio.sleep(5) 
+                # Add small delay before retry
+                await asyncio.sleep(5)
+                
+                # Try to reconnect to Redis if that's the issue
+                try:
+                    await self.redis_client.ping()
+                except:
+                    logger.error("Lost Redis connection, attempting to reconnect...")
+                    # Let the worker pool handle reconnection
+                    self.running = False
+                    break 

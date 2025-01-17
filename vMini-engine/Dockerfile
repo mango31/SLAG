@@ -3,8 +3,11 @@ FROM --platform=linux/amd64 python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
+# Install build dependencies with apt key fix
+RUN apt-get update && \
+    apt-get install -y gnupg2 && \
+    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 0E98404D386FA1D9 && \
+    apt-get install -y \
     gcc \
     g++ \
     curl \
@@ -34,7 +37,7 @@ FROM --platform=linux/amd64 python:3.11-slim
 
 WORKDIR /app
 
-# Install production dependencies
+# Install production dependencies - minimal set
 RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*

@@ -21,12 +21,19 @@ class S3Service:
             timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             key = f"{story_type}/{story_id}-{timestamp}.{format}"
             
+            # Set content type based on format
+            content_type = {
+                'md': 'text/markdown',
+                'txt': 'text/plain',
+                'json': 'application/json'
+            }.get(format, 'text/plain')
+            
             # Upload to S3
             self.s3.put_object(
                 Bucket=self.bucket,
                 Key=key,
                 Body=content,
-                ContentType='text/markdown' if format == 'md' else 'text/plain'
+                ContentType=content_type
             )
             
             # Generate URL

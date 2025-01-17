@@ -105,11 +105,11 @@ class StoryGenerationService:
                 framework_id=framework.title,
                 bible_id=story_bible.get("title", ""),
                 created=datetime.now(),
-                file_path=None
+                file_paths=None
             )
             
-            story_url = await self._save_story(story)
-            story.file_path = story_url
+            story_urls = await self._save_story(story)
+            story.file_paths = story_urls
             
             logger.info(f"Successfully generated complete story of {story.word_count} words")
             return story
@@ -152,7 +152,30 @@ bible: {story.bible_id}
                 format='txt'
             )
             
-            return md_url
+            # Save JSON version
+            json_content = {
+                "title": story.title,
+                "genre": story.genre,
+                "author": story.author,
+                "created": story.created.isoformat(),
+                "word_count": story.word_count,
+                "framework_id": story.framework_id,
+                "bible_id": story.bible_id,
+                "content": story.content
+            }
+            json_url = await self.s3.save_story(
+                content=json.dumps(json_content, indent=2),
+                story_id=story.title.lower().replace(' ', '_'),
+                story_type='story',
+                format='json'
+            )
+            
+            # Return all URLs in the result
+            return {
+                "markdown_url": md_url,
+                "text_url": txt_url,
+                "json_url": json_url
+            }
             
         except Exception as e:
             logger.error(f"Error saving story to S3: {str(e)}")

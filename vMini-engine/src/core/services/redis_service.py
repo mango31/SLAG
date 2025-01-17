@@ -1,4 +1,5 @@
 from redis import Redis
+from redis.asyncio import Redis as AsyncRedis
 import logging
 from datetime import datetime
 import json
@@ -15,7 +16,17 @@ class RedisService:
         
         for attempt in range(max_retries):
             try:
+                # Sync client for regular operations
                 self.redis = Redis(
+                    host=host,
+                    port=port,
+                    decode_responses=True,
+                    socket_timeout=5,
+                    retry_on_timeout=True,
+                    socket_connect_timeout=10
+                )
+                # Async client for pubsub
+                self.async_redis = AsyncRedis(
                     host=host,
                     port=port,
                     decode_responses=True,
@@ -92,3 +103,17 @@ class RedisService:
                 "completed_at": datetime.now().isoformat()
             }
         ) 
+
+    async def get_pubsub(self):
+        """Get async pubsub client"""
+        return self.async_redis.pubsub()
+
+    async def publish_progress(self, request_id: str, message: str):
+        """Publish progress update for a request"""
+        try:
+            await self.async_redis.publish(f"progress:{request_id}", message)
+            logger.debug(f"Published progress for {request_id}: {message}")
+        except Exception as e:
+            logger.error(f"Error publishing progress: {str(e)}")
+            # Don't raise - progress updates are non-critical
+            pass 

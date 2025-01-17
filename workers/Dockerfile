@@ -12,6 +12,9 @@ RUN apt-get update && \
         libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Create app user
+RUN useradd -m -r -s /bin/bash appuser
+
 # Copy requirements and setup files
 COPY requirements.txt setup.py ./
 
@@ -33,15 +36,19 @@ RUN pip install -e .
 
 # Create necessary directories with proper permissions
 RUN mkdir -p /app/logs && \
-    chmod -R 777 /app/logs && \
-    chown -R nobody:nogroup /app/logs
+    chown -R appuser:appuser /app/logs && \
+    chmod -R 755 /app/logs
 
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 # Switch to non-root user
-USER nobody
+USER appuser
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
 
 # Run the worker service
 CMD ["python", "-m", "src.worker.run_worker"] 

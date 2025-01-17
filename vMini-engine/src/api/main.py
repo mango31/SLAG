@@ -26,6 +26,7 @@ from src.core.services.framework_generation_service import FrameworkGenerationSe
 from src.core.services.story_generation_service import StoryGenerationService
 from src.core.services.validation_service import ValidationService
 from src.core.services.llm_service import LLMService
+from sse_starlette.sse import EventSourceResponse
 
 logger = setup_logging("api", "api.log")
 
@@ -50,6 +51,41 @@ async def generate_story(request: StoryRequest):
 @app.get("/status/{request_id}")
 async def get_status(request_id: str):
     return await story_orchestration_service.get_request_status(request_id)
+
+@app.get("/stream/{request_id}")
+async def stream_progress(request_id: str):
+    logger.info(f"Starting SSE stream for request {request_id}")
+    
+    async def event_generator():
+        try:
+            # Get Redis pubsub using async client
+            pubsub = await redis_client.get_pubsub()
+            logger.info(f"Created pubsub for request {request_id}")
+            
+            # Subscribe to channel
+            await pubsub.subscribe(f"progress:{request_id}")
+            logger.info(f"Subscribed to progress:{request_id}")
+            
+            while True:
+                message = await pubsub.get_message(ignore_subscribe_messages=True)
+                if message:
+                    logger.info(f"Got message for {request_id}: {message}")
+                    yield {
+                        "event": "progress",
+                        "data": message["data"]
+                    }
+                await asyncio.sleep(0.1)
+                
+        except Exception as e:
+            logger.error(f"Error in SSE stream: {str(e)}")
+            raise
+        finally:
+            if pubsub:
+                await pubsub.unsubscribe(f"progress:{request_id}")
+                await pubsub.close()
+                logger.info(f"Unsubscribed from progress:{request_id}")
+
+    return EventSourceResponse(event_generator())
 
 @app.get("/status")
 async def get_generation_status():
