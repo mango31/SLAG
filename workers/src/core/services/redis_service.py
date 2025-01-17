@@ -135,6 +135,19 @@ class RedisService:
                     completion_msg
                 )
                 
+                # Send a complete event for frontend handling
+                complete_event = (
+                    "event: complete\n"
+                    "data: complete\n\n"
+                )
+                
+                await loop.run_in_executor(
+                    None,
+                    self.redis.publish,
+                    f"progress:{request_id}",
+                    complete_event
+                )
+                
                 # Send disconnect event with retry: -1 to prevent reconnection
                 disconnect_event = (
                     "event: http.disconnect\n"
