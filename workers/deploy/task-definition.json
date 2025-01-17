@@ -1,0 +1,99 @@
+{
+    "family": "vmini-engine-worker-production",
+    "networkMode": "awsvpc",
+    "requiresCompatibilities": ["FARGATE"],
+    "cpu": "2048",
+    "memory": "4096",
+    "executionRoleArn": "arn:aws:iam::047719630676:role/vmini-engine-role",
+    "taskRoleArn": "arn:aws:iam::047719630676:role/vmini-engine-role",
+    "containerDefinitions": [
+        {
+            "name": "worker",
+            "image": "047719630676.dkr.ecr.us-west-2.amazonaws.com/vmini-engine-worker-production:latest",
+            "essential": true,
+            "environment": [
+                {
+                    "name": "PYTHONPATH",
+                    "value": "/app"
+                },
+                {
+                    "name": "AWS_REGION",
+                    "value": "us-west-2"
+                },
+                {
+                    "name": "AWS_PARAMETER_PATH",
+                    "value": "/vMini-engine/prod"
+                },
+                {
+                    "name": "ENVIRONMENT",
+                    "value": "production"
+                },
+                {
+                    "name": "NUM_WORKERS",
+                    "value": "4"
+                },
+                {
+                    "name": "BEDROCK_MODEL_ID",
+                    "value": "anthropic.claude-3-5-sonnet-20241022-v2:0"
+                },
+                {
+                    "name": "REDIS_HOST",
+                    "value": "vmini-engine-redis-production.drxrzz.0001.usw2.cache.amazonaws.com"
+                },
+                {
+                    "name": "REDIS_PORT",
+                    "value": "6379"
+                },
+                {
+                    "name": "WORLD_BUILDING_TEMPERATURE",
+                    "value": "0.3"
+                },
+                {
+                    "name": "WORLD_BUILDING_MAX_TOKENS",
+                    "value": "200000"
+                },
+                {
+                    "name": "FRAMEWORK_TEMPERATURE",
+                    "value": "0.6"
+                },
+                {
+                    "name": "FRAMEWORK_MAX_TOKENS",
+                    "value": "200000"
+                },
+                {
+                    "name": "STORY_TEMPERATURE",
+                    "value": "0.8"
+                },
+                {
+                    "name": "STORY_MAX_TOKENS",
+                    "value": "200000"
+                },
+                {
+                    "name": "SECTION_MAX_TOKENS",
+                    "value": "200000"
+                },
+                {
+                    "name": "TOP_P",
+                    "value": "0.9"
+                },
+                {
+                    "name": "IMPROVEMENT_TEMPERATURE",
+                    "value": "0.8"
+                },
+                {
+                    "name": "IMPROVEMENT_MAX_TOKENS",
+                    "value": "200000"
+                }
+            ],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/vmini-engine-worker-production",
+                    "awslogs-region": "us-west-2",
+                    "awslogs-stream-prefix": "worker",
+                    "awslogs-create-group": "true"
+                }
+            }
+        }
+    ]
+} 

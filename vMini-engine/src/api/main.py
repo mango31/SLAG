@@ -7,14 +7,25 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta
 from src.config.config import settings
 from src.core.services import (
-    redis_service,
-    story_orchestration_service
+    LLMService,
+    RedisService,
+    WorldGenerationService,
+    FrameworkGenerationService,
+    StoryGenerationService,
+    ValidationService,
+    StoryOrchestrationService
 )
 import os
 from src.core.services.redis_service import RedisService
 from starlette.middleware.base import BaseHTTPMiddleware
 import asyncio
 from fastapi.responses import JSONResponse
+from src.core.services.story_orchestration_service import StoryOrchestrationService
+from src.core.services.world_generation_service import WorldGenerationService
+from src.core.services.framework_generation_service import FrameworkGenerationService
+from src.core.services.story_generation_service import StoryGenerationService
+from src.core.services.validation_service import ValidationService
+from src.core.services.llm_service import LLMService
 
 logger = setup_logging("api", "api.log")
 
@@ -33,13 +44,12 @@ class StoryRequest(BaseModel):
 
 @app.post("/generate")
 async def generate_story(request: StoryRequest):
-    try:
-        logger.info(f"Received story generation request: {request.prompt[:100]}...")
-        result = await story_orchestration_service.generate_complete_story(request.prompt)
-        return result
-    except Exception as e:
-        logger.error(f"Error generating story: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    request_id = await story_orchestration_service.queue_story_request(request.prompt)
+    return {"request_id": request_id, "status": "queued"}
+
+@app.get("/status/{request_id}")
+async def get_status(request_id: str):
+    return await story_orchestration_service.get_request_status(request_id)
 
 @app.get("/status")
 async def get_generation_status():
@@ -54,8 +64,18 @@ async def get_generation_status():
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 
-# Initialize Redis service
+# Initialize services
+llm_service = LLMService()  # Initialize LLM service first
 redis_client = RedisService(host=REDIS_HOST, port=REDIS_PORT)
+
+# Initialize story orchestration service with all dependencies
+story_orchestration_service = StoryOrchestrationService(
+    world_service=WorldGenerationService(llm_service),
+    framework_service=FrameworkGenerationService(llm_service),
+    story_service=StoryGenerationService(llm_service),
+    validation_service=ValidationService(llm_service),
+    redis_service=redis_client
+)
 
 # Simple in-memory cache for health check
 _last_health_check = None

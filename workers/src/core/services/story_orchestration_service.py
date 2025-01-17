@@ -11,7 +11,7 @@ from src.core.services.validation_service import ValidationService
 import asyncio
 from fastapi import HTTPException
 from src.core.utils.request_utils import generate_request_id
-from src.core.services.redis_service import RedisService
+from src.worker.config import settings
 
 logger = setup_logging("orchestration", "orchestration.log")
 
@@ -21,17 +21,15 @@ class StoryOrchestrationService:
         world_service: WorldGenerationService,
         framework_service: FrameworkGenerationService,
         story_service: StoryGenerationService,
-        validation_service: ValidationService,
-        redis_service: RedisService
+        validation_service: ValidationService
     ):
-        if not all([world_service, framework_service, story_service, redis_service]):
+        if not all([world_service, framework_service, story_service]):
             raise ValueError("All services must be provided")
             
         self.world_service = world_service
         self.framework_service = framework_service
         self.story_service = story_service
         self.validation = validation_service
-        self.redis_service = redis_service
         self.current_state: Dict[str, Any] = {}
         
     async def generate_complete_story(self, prompt: str) -> Dict[str, Any]:

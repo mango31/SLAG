@@ -21,6 +21,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy source code
 COPY src ./src
 
+# Create __init__.py files
+RUN touch src/__init__.py \
+    src/api/__init__.py \
+    src/core/__init__.py
+
 # Install local package
 RUN pip install -e .
 
@@ -36,10 +41,14 @@ RUN apt-get update && apt-get install -y \
 
 # Copy installed packages from builder
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /app/src ./src
+COPY --from=builder /app/src /app/src
+COPY --from=builder /app/setup.py /app/setup.py
 
 # Install uvicorn directly in production stage
 RUN pip install uvicorn==0.24.0
+
+# Install local package in production stage
+RUN pip install -e .
 
 # Create necessary directories with proper permissions
 RUN mkdir -p /app/output/stories /app/output/frameworks /app/logs && \

@@ -1,0 +1,47 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Redis Upgrade for vMini-engine'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [development, production]
+  
+  ExistingRedisSecurityGroup:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Existing Redis Security Group ID
+
+  ExistingSubnetGroup:
+    Type: String
+    Description: Existing Redis Subnet Group Name
+
+Resources:
+  # New Redis Instance with upgraded specs
+  RedisUpgraded:
+    Type: AWS::ElastiCache::CacheCluster
+    Properties:
+      ClusterName: !Sub vmini-engine-redis-${Environment}-upgraded
+      Engine: redis
+      EngineVersion: '7.0'
+      CacheNodeType: cache.t4g.small  # Upgraded instance type
+      NumCacheNodes: 1
+      Port: 6379
+      VpcSecurityGroupIds: 
+        - !Ref ExistingRedisSecurityGroup
+      CacheSubnetGroupName: !Ref ExistingSubnetGroup
+      PreferredMaintenanceWindow: sun:05:00-sun:09:00
+      AutoMinorVersionUpgrade: true
+      SnapshotRetentionLimit: 5  # Keep 5 days of backups
+
+Outputs:
+  NewRedisEndpoint:
+    Description: New Redis endpoint address
+    Value: !GetAtt RedisUpgraded.RedisEndpoint.Address
+    Export:
+      Name: !Sub ${AWS::StackName}-NewRedisEndpoint
+
+  NewRedisPort:
+    Description: New Redis port
+    Value: !GetAtt RedisUpgraded.RedisEndpoint.Port
+    Export:
+      Name: !Sub ${AWS::StackName}-NewRedisPort 
