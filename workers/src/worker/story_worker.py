@@ -85,9 +85,11 @@ class StoryWorker:
                 await self.redis_client.store_story_result(request_id, story_dict)
                 await self.redis_client.update_request_status(request_id, "completed")
                 
+                # Send final progress message with completion flag
                 await self.redis_client.publish_progress(
                     request_id, 
-                    f"Story generation complete! Generated {story.word_count} words."
+                    f"Story generation complete! Generated {story.word_count} words.",
+                    is_complete=True
                 )
                 
                 logger.info(f"Completed story generation for request {request_id}")
@@ -95,14 +97,24 @@ class StoryWorker:
             except Exception as e:
                 error_msg = f"Error during story generation: {str(e)}"
                 logger.error(error_msg)
-                await self.redis_client.publish_progress(request_id, f"Error: {error_msg}")
+                # Send error message with completion flag
+                await self.redis_client.publish_progress(
+                    request_id, 
+                    f"Error: {error_msg}",
+                    is_complete=True
+                )
                 await self.redis_client.update_request_status(request_id, "failed", error=str(e))
                 raise
                 
         except Exception as e:
             logger.error(f"Error processing request {request_id}: {str(e)}")
             await self.redis_client.update_request_status(request_id, "failed", error=str(e))
-            await self.redis_client.publish_progress(request_id, f"Failed: {str(e)}")
+            # Send error message with completion flag
+            await self.redis_client.publish_progress(
+                request_id, 
+                f"Failed: {str(e)}",
+                is_complete=True
+            )
 
     async def run(self):
         """Main worker loop"""

@@ -110,18 +110,56 @@ class RedisService:
             logger.error(f"Error storing story result: {str(e)}")
             raise
 
-    async def publish_progress(self, request_id: str, message: str):
-        """Publish progress update for a request"""
+    async def publish_progress(self, request_id: str, message: str, is_complete: bool = False):
+        """
+        Publish progress update for a request
+        
+        Args:
+            request_id: The request identifier
+            message: The progress message to send
+            is_complete: If True, adds completion marker to signal client to close connection
+        """
         try:
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None,
-                self.redis.publish,
-                f"progress:{request_id}",
-                message
-            )
+            
+            if is_complete:
+                # Send the completion message
+                completion_msg = json.dumps({
+                    "message": message,
+                    "complete": True
+                })
+                await loop.run_in_executor(
+                    None,
+                    self.redis.publish,
+                    f"progress:{request_id}",
+                    completion_msg
+                )
+                
+                # Send disconnect event with retry: -1 to prevent reconnection
+                disconnect_event = (
+                    "event: http.disconnect\n"
+                    "retry: -1\n"
+                    "data: disconnect\n\n"
+                )
+                
+                await loop.run_in_executor(
+                    None,
+                    self.redis.publish,
+                    f"progress:{request_id}",
+                    disconnect_event
+                )
+            else:
+                # Normal progress message - send raw message without SSE formatting
+                await loop.run_in_executor(
+                    None,
+                    self.redis.publish,
+                    f"progress:{request_id}",
+                    message
+                )
+                
             logger.debug(f"Published progress for {request_id}: {message}")
         except Exception as e:
             logger.error(f"Error publishing progress: {str(e)}")
             # Don't raise - progress updates are non-critical
+            pass 
             pass 
