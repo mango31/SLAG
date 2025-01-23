@@ -3,13 +3,20 @@
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { useState, useEffect } from "react";
-import { useWeb3 } from "@/contexts/Web3Context";
-import { Wallet, LogIn, PlusCircle, Menu, X } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import SignInModal from "./SignInModal";
 import UserRegistrationModal from "./UserRegistrationModal";
 import { setToken, getToken, removeToken } from "@/utils/auth";
 import UserMenu from "./UserMenu";
+import { useDispatch, useSelector } from "react-redux";
+import {
+  connectWallet,
+  disconnectWallet,
+  checkExistingConnection,
+} from "@/store/slices/web3Slice";
+import { loginWithEmail } from "@/store/slices/authSlice";
+import type { AppDispatch, RootState } from "@/store";
+import { Wallet, LogIn, PlusCircle, Menu, X } from "lucide-react";
 
 interface User {
   username?: string;
@@ -42,11 +49,51 @@ export default function DashboardLayout({
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { connected, publicKey, balance, connect, disconnect } = useWeb3();
+  const dispatch = useDispatch<AppDispatch>();
+
+  const { connected, publicKey, balance } = useSelector(
+    (state: RootState) => state.web3
+  );
   const { user, authMethod, signOut, signIn, isLoading } = useAuth();
+
   const [isSignInModalOpen, setIsSignInModalOpen] = useState(false);
   const [isRegistrationModalOpen, setIsRegistrationModalOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // Check for existing wallet connection on mount
+  useEffect(() => {
+    const checkConnection = async () => {
+      try {
+        if (!connected && !localStorage.getItem("wallet_disconnected")) {
+          const result = await dispatch(checkExistingConnection()).unwrap();
+          if (result?.publicKey) {
+            const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL;
+            if (!BACKEND_URL) return;
+
+            const response = await fetch(`${BACKEND_URL}/api/auth/login`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                web3_wallet: result.publicKey,
+                login_method: "web3",
+              }),
+            });
+
+            if (response.ok) {
+              const data = await response.json();
+              signIn(data.token, data.user);
+            }
+          }
+        }
+      } catch (error) {
+        console.error("Error checking connection:", error);
+      }
+    };
+
+    checkConnection();
+  }, [dispatch, connected, signIn]);
 
   // Close sidebar when route changes on mobile
   useEffect(() => {
@@ -61,7 +108,6 @@ export default function DashboardLayout({
 
   const handleConnect = async () => {
     if (authMethod === "email") {
-      // Show warning or confirmation before switching
       if (
         window.confirm(
           "Switching to wallet will sign you out of your current session. Continue?"
@@ -69,21 +115,18 @@ export default function DashboardLayout({
       ) {
         signOut();
         try {
-          await connect();
-          // Wait for the connection and authentication to complete
-          const provider = window?.phantom?.solana;
-          if (provider?.isPhantom && provider.publicKey) {
+          const result = await dispatch(connectWallet()).unwrap();
+          if (result.publicKey) {
             const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL;
             if (!BACKEND_URL) return;
 
-            // Try to login with the wallet
             const response = await fetch(`${BACKEND_URL}/api/auth/login`, {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({
-                web3_wallet: provider.publicKey.toString(),
+                web3_wallet: result.publicKey,
                 login_method: "web3",
               }),
             });
@@ -99,21 +142,18 @@ export default function DashboardLayout({
       }
     } else {
       try {
-        await connect();
-        // Same authentication logic as above
-        const provider = window?.phantom?.solana;
-        if (provider?.isPhantom && provider.publicKey) {
+        const result = await dispatch(connectWallet()).unwrap();
+        if (result.publicKey) {
           const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL;
           if (!BACKEND_URL) return;
 
-          // Try to login with the wallet
           const response = await fetch(`${BACKEND_URL}/api/auth/login`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              web3_wallet: provider.publicKey.toString(),
+              web3_wallet: result.publicKey,
               login_method: "web3",
             }),
           });
@@ -129,14 +169,32 @@ export default function DashboardLayout({
     }
   };
 
-  const handleDisconnect = () => {
-    disconnect();
-    signOut();
+  const handleDisconnect = async () => {
+    try {
+      await dispatch(disconnectWallet()).unwrap();
+      signOut();
+    } catch (error) {
+      console.error("Error disconnecting wallet:", error);
+    }
   };
 
-  const handleSignOut = () => {
-    signOut();
-    router.push("/dashboard/create");
+  const handleSignOut = async () => {
+    try {
+      // If user was signed in with wallet, disconnect it first
+      if (authMethod === "wallet") {
+        const provider = window?.phantom?.solana;
+        if (provider?.isPhantom) {
+          await provider.disconnect();
+        }
+        await dispatch(disconnectWallet()).unwrap();
+      }
+
+      // Then sign out
+      signOut();
+      router.push("/dashboard/create");
+    } catch (error) {
+      console.error("Error signing out:", error);
+    }
   };
 
   const handleOpenSignIn = () => {
@@ -147,7 +205,7 @@ export default function DashboardLayout({
           "Switching to email sign in will disconnect your wallet. Continue?"
         )
       ) {
-        disconnect();
+        dispatch(disconnectWallet());
         signOut();
         setIsSignInModalOpen(true);
       }
@@ -161,40 +219,15 @@ export default function DashboardLayout({
     password: string;
   }) => {
     try {
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/auth/login`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            ...(credentials.identifier.includes("@")
-              ? { email: credentials.identifier }
-              : { username: credentials.identifier }),
-            password: credentials.password,
-            login_method: "email",
-          }),
-        }
-      );
+      console.log("Starting sign in process...");
+      const result = await dispatch(loginWithEmail(credentials)).unwrap();
+      console.log("Login successful, updating auth context...");
 
-      const data = await response.json();
+      // Update auth context with the same data
+      await signIn(result.token, result.user);
+      console.log("Auth context updated");
 
-      if (!response.ok) {
-        throw new Error(data.detail || "Failed to sign in");
-      }
-
-      // Store the token in localStorage
-      localStorage.setItem("auth_token", data.token);
-
-      // Update auth context
-      signIn(data.token, data.user);
       setIsSignInModalOpen(false);
-
-      // Navigate to dashboard without full page reload
-      router.push("/dashboard/create");
-
-      return data;
     } catch (error) {
       console.error("Error signing in:", error);
       throw error;
@@ -361,7 +394,7 @@ export default function DashboardLayout({
 
           {/* Wallet Section */}
           <div className="border-t border-white/10 pt-4">
-            {connected ? (
+            {connected && user ? (
               <ConnectedWalletView
                 publicKey={publicKey}
                 balance={balance}
